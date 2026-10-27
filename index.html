@@ -323,7 +323,7 @@
   </div>
 
   <div class="searchWrap">
-    <input class="searchBox" id="hubSearch" type="text" placeholder="Buscar un producto en todas las marcas…" oninput="hubSearch(this.value)" autocomplete="off">
+<input class="searchBox" id="hubSearch" type="text" placeholder="Buscar un producto…" oninput="hubSearch(this.value)" onkeydown="handleSearchKey(event)" autocomplete="off">
     <button class="clearBtn" id="clearSearchBtn" onclick="clearSearch()">✕</button>
     <span class="searchIcon">🔍</span>
     <div class="searchHint" id="searchHint"></div>
@@ -845,6 +845,20 @@ function updateBrandCounts() {
       .replace('T&G', 'TG')
       .replace('T&amp;G', 'TG');
   }
+
+  // --- FUNCIONES PARA OCULTAR EL TECLADO MÓVIL ---
+
+// 1. Detecta si presionan "Enter" en el input
+function handleSearchKey(event) {
+  if (event.key === 'Enter') {
+    searchBox.blur(); // Oculta el teclado en móviles
+  }
+}
+
+// 2. Si hacen clic en el icono de la lupa o realizan otra acción de búsqueda
+function dismissKeyboard() {
+  searchBox.blur();
+}
 
   document.querySelectorAll('#brandGrid .card').forEach(card => {
     const brandEl = card.querySelector('.brand');
