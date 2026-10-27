@@ -329,8 +329,29 @@
     <div class="searchHint" id="searchHint"></div>
   </div>
 
+  
+  <!-- FILTRO DE ORDENAMIENTO POR PRECIO -->
+<div id="filterContainer" style="display:none; max-width:520px; margin:0 auto 20px; justify-content:flex-end; align-items:center; gap:8px;">
+  <label for="priceSortSelect" style="font-family:var(--mono); font-size:12px; color:var(--muted);">Ordenar por:</label>
+  <select id="priceSortSelect" onchange="onSortChange()" style="padding:6px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel); font-family:var(--sans); font-size:13px; color:var(--ink); outline:none; cursor:pointer;">
+    <option value="default">Relevancia</option>
+    <option value="asc">Precio: Menor a Mayor</option>
+    <option value="desc">Precio: Mayor a Menor</option>
+  </select>
+</div>
+
+
   <div class="results" id="searchResults" style="display:none;"></div>
+    <!-- CONTENEDOR PARA EL BOTÓN MOSTRAR MÁS -->
+<div id="loadMoreContainer" style="grid-column:1/-1; text-align:center; margin:20px 0; display:none;">
+  <button id="loadMoreBtn" onclick="loadMoreResults()" style="background:var(--accent-dark); color:#fff; border:none; padding:10px 20px; border-radius:20px; font-family:var(--sans); font-size:13.5px; font-weight:600; cursor:pointer; transition:background 0.2s;">
+    Mostrar más
+  </button>
+</div>
+
+
   <p class="searchEmpty" id="searchEmpty"></p>
+
 
   <div style="text-align:center;margin:0 0 30px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
     <a href="pedido/" style="display:inline-flex;align-items:center;gap:8px;background:var(--accent);color:#fff;font-family:var(--sans);font-size:14px;font-weight:700;padding:11px 20px;border-radius:24px;text-decoration:none;box-shadow:0 6px 18px rgba(228,50,45,.3);">🛒 Ver mi pedido completo</a>
@@ -609,6 +630,30 @@ function normalizeText(str) {
     .replace(/[\u0300-\u036f]/g, ""); // Remueve tildes (á, é, í, ó, ú -> a, e, i, o, u)
 }
 
+// --- VARIABLES DE PAGINACIÓN Y ESTADO DE BÚSQUEDA ---
+let currentSearchResults = [];
+let displayedCount = 0;
+const PAGE_SIZE = 30; // Cantidad de productos que se muestran por lote
+
+function clearSearch() {
+  searchBox.value = '';
+  searchBox.focus();
+  clearBtn.style.display = 'none';
+  searchResults.style.display = 'none';
+  document.getElementById('filterContainer').style.display = 'none';
+  document.getElementById('loadMoreContainer').style.display = 'none';
+  searchHint.textContent = 'Buscando en ' + DATA.length + ' productos de todas las líneas y marcas';
+  document.getElementById('brandGrid').style.display = 'grid';
+  updateFooter();
+}
+
+function normalizeText(str) {
+  if (!str) return '';
+  return str.toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
 // --- BÚSQUEDA INTELIGENTE Y AVANZADA ---
 function hubSearch(q) {
   const rawQ = q.trim();
@@ -619,6 +664,8 @@ function hubSearch(q) {
   searchResults.innerHTML = '';
   searchResults.style.display = 'none';
   document.getElementById('brandGrid').style.display = 'none';
+  document.getElementById('filterContainer').style.display = 'none';
+  document.getElementById('loadMoreContainer').style.display = 'none';
 
   if (rawQ.length < 2) {
     searchHint.textContent = 'Buscando en ' + DATA.length + ' productos de todas las marcas y líneas';
@@ -632,22 +679,17 @@ function hubSearch(q) {
     return;
   }
 
-  // Separamos la búsqueda en palabras independientes (ej: "audifono inalambrico" -> ["audifono", "inalambrico"])
   const searchWords = cleanQuery.split(/\s+/).filter(Boolean);
 
-  const results = DATA.filter(item => {
-    // Unimos el nombre, código y marca normalizados del producto
+  currentSearchResults = DATA.filter(item => {
     const itemText = normalizeText(`${item.n || ''} ${item.c || ''} ${item.b || ''}`);
-    
-    // Coincidencia avanzada: el producto debe contener TODAS las palabras ingresadas (búsqueda tipo AND por palabras)
     return searchWords.every(word => {
-      // Manejo inteligente básico de plurales (si la palabra termina en 's' y tiene más de 3 letras, probamos sin la 's')
       const baseWord = (word.endsWith('s') && word.length > 3) ? word.slice(0, -1) : word;
       return itemText.includes(word) || itemText.includes(baseWord);
     });
   });
 
-  if (results.length === 0) {
+  if (currentSearchResults.length === 0) {
     searchResults.style.display = 'none';
     const telWA = '593967783150';
     const textoWA = encodeURIComponent('Hola, estoy buscando un producto que no encontré en el catálogo: ' + rawQ);
@@ -657,18 +699,48 @@ function hubSearch(q) {
     return;
   }
 
-  searchResults.style.display = 'grid';
-  searchHint.textContent = `Encontrados ${results.length} productos.`;
-  const shown = results.slice(0, 60);
+  // Mostramos el filtro de precio cuando hay resultados
+  document.getElementById('filterContainer').style.display = 'flex';
 
-  searchResults.innerHTML = shown.map(item => {
+  applySorting();
+  displayedCount = 0;
+  searchResults.style.display = 'grid';
+  renderResultsBatch(true);
+}
+
+// --- ORDENAMIENTO POR PRECIO ---
+function onSortChange() {
+  applySorting();
+  displayedCount = 0;
+  renderResultsBatch(true);
+}
+
+function applySorting() {
+  const sortVal = document.getElementById('priceSortSelect').value;
+  if (sortVal === 'asc') {
+    currentSearchResults.sort((a, b) => (a.p || 0) - (b.p || 0));
+  } else if (sortVal === 'desc') {
+    currentSearchResults.sort((a, b) => (b.p || 0) - (a.p || 0));
+  }
+}
+
+// --- RENDERIZADO POR LOTES Y BOTÓN MOSTRAR MÁS ---
+function renderResultsBatch(reset = false) {
+  if (reset) {
+    searchResults.innerHTML = '';
+  }
+
+  const nextBatch = currentSearchResults.slice(displayedCount, displayedCount + PAGE_SIZE);
+  displayedCount += nextBatch.length;
+
+  const htmlContent = nextBatch.map(item => {
     const currentQty = qtyState[item.c] || 0;
     const baseHref = (item.isLinea || item.isMarca) ? (item.crossHref || item.href) : (item.href || '');
     const urlCategoria = `${baseHref}?search=${encodeURIComponent(item.n)}`;
     
     return `
     <div class="rcard" id="card-${item.c}">
-    <img class="rthumb" src="${item.i || item.t || ''}" alt="" onerror="this.outerHTML='<div class=\\'rthumb\\'>📦</div>'">
+      <img class="rthumb" src="${item.i || item.t || ''}" alt="" onerror="this.outerHTML='<div class=\\'rthumb\\'>📦</div>'">
       <div class="rinfo">
         <div class="rbrand">${item.b || 'PRODUCTO'}</div>
         <div class="rname">${item.n}</div>
@@ -688,19 +760,43 @@ function hubSearch(q) {
     `;
   }).join('');
 
-  if (results.length > 60) {
-    searchResults.innerHTML += '<p style="grid-column:1/-1;text-align:center;color:var(--muted);font-size:12.5px;">Mostrando 60 de ' + results.length + ' resultados — afina tu búsqueda para ver más.</p>';
+  if (reset) {
+    searchResults.innerHTML = htmlContent;
+  } else {
+    searchResults.insertAdjacentHTML('beforeend', htmlContent);
   }
 
+  bindCardClickEvents();
+
+  searchHint.textContent = `Mostrando ${displayedCount} de ${currentSearchResults.length} resultados.`;
+  
+  const loadMoreContainer = document.getElementById('loadMoreContainer');
+  const loadMoreBtn = document.getElementById('loadMoreBtn');
+  
+  if (displayedCount < currentSearchResults.length) {
+    loadMoreContainer.style.display = 'block';
+    loadMoreBtn.textContent = `Mostrar más (${currentSearchResults.length - displayedCount} restantes)`;
+  } else {
+    loadMoreContainer.style.display = 'none';
+  }
+
+  updateFooter();
+}
+
+function loadMoreResults() {
+  renderResultsBatch(false);
+}
+
+function bindCardClickEvents() {
   document.querySelectorAll('.rcard').forEach(card => {
-    card.addEventListener('click', function(e) {
+    card.onclick = function(e) {
       if (e.target.closest('.qty-selector')) return;
       document.querySelectorAll('.qty-selector').forEach(el => {
         if (el.id !== 'qty-' + this.id.split('-')[1]) el.style.display = 'none';
       });
       const qtyDiv = this.querySelector('.qty-selector');
       qtyDiv.style.display = qtyDiv.style.display === 'flex' ? 'none' : 'flex';
-    });
+    };
   });
 }
 
